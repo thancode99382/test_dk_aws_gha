@@ -1,0 +1,55 @@
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Build Docker image
+      run: docker build -t express-docker-app .
+
+    - name: Save Docker image to tar
+      run: docker save express-docker-app > express-docker-app.tar
+
+    - name: Copy image to EC2
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.EC2_KEY }}
+        source: "express-docker-app.tar"
+        target: "~/"
+
+    - name: Deploy on EC2
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.EC2_KEY }}
+        script: |
+          # Load the new Docker image
+          docker load < express-docker-app.tar
+          
+          # Stop and remove existing container
+          docker stop express-docker-app || true
+          docker rm express-docker-app || true
+          
+          # Remove old images to save space
+          docker image prune -f
+          
+          # Run new container with restart policy
+          docker run -d -p 80:3000 --name express-docker-app --restart unless-stopped express-docker-app
+          
+          # Clean up
+          rm express-docker-app.tar
+          
+          # Verify deployment
+          sleep 5
+          curl -f http://localhost:80 || exit 1
